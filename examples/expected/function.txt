@@ -1,0 +1,12 @@
+=== functions ===
+5
+10
+9
+12
+Hello from greet
+Hello from greet
+A
+B
+C
+49
+18

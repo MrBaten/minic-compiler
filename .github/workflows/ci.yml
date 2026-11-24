@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} / ${{ matrix.cc }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cc: gcc
+          - os: ubuntu-latest
+            cc: clang
+          - os: macos-latest
+            cc: clang
+    env:
+      CC: ${{ matrix.cc }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install valgrind (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Build (warnings are errors)
+        run: make CC="$CC" CFLAGS="-std=c11 -Wall -Wextra -Wpedantic -Werror -O2 -g"
+
+      - name: Test suite
+        run: make test CC="$CC"
+
+      - name: Run all examples
+        run: make examples CC="$CC"
+
+      - name: Memory check (Linux)
+        if: runner.os == 'Linux'
+        run: make memcheck CC="$CC"

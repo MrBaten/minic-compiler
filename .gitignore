@@ -1,0 +1,5 @@
+*.o
+minic
+out.c
+out
+build/

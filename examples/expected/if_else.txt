@@ -1,0 +1,13 @@
+x is greater than 5
+Grade B
+x == 7
+x != 8
+x is exactly 7
+and: false
+or: true
+not no: true
+negated test is false
+in range
+-1
+0
+1
