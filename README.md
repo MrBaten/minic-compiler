@@ -2,13 +2,18 @@
 
 [![CI](https://github.com/MrBaten/minic-compiler/actions/workflows/ci.yml/badge.svg)](https://github.com/MrBaten/minic-compiler/actions/workflows/ci.yml)
 
-`minic` is a hand-written compiler for **Mini-C**, a small, well-defined subset of C, written in pure C11 with **zero dependencies**: no Lex, Yacc, Flex or Bison, and no libraries beyond the C standard library. It consists of a hand-written lexer, a recursive-descent parser that builds an abstract syntax tree, a semantic checker with scoped symbol tables and type rules, and a code generator that transpiles the checked program to portable C11, which `gcc` or `clang` then turns into an executable. Every stage can be inspected from the command line (`--tokens`, `--ast`), and the whole project builds with zero warnings under `-Wall -Wextra -Wpedantic`.
+`minic` is a hand-written compiler for **Mini-C**, a small, well-defined subset of C, written in pure C11 with **zero dependencies**: no Lex, Yacc, Flex or Bison, and no libraries beyond the C standard library. It consists of a hand-written lexer, a recursive-descent parser that builds an abstract syntax tree, a semantic checker with scoped symbol tables and type rules, and a code generator that transpiles the checked program to portable C11, which `gcc` or `clang` then turns into an executable. Every stage can be inspected from the command line (`--tokens`, `--ast`), programs can also be executed directly by a built-in interpreter (`--run`), and the whole project builds with zero warnings under `-Wall -Wextra -Wpedantic`.
+
+### ▶ [Try it in your browser: MiniC Playground](https://mrbaten.github.io/minic/)
+
+The same C sources, compiled to **WebAssembly**, power an in-browser playground: edit Mini-C, watch the tokens, AST and generated C update as you type, and run the program. Nothing is installed and nothing is sent to a server.
 
 ## Table of Contents
 
 - [Pipeline](#pipeline)
 - [Worked Example](#worked-example)
 - [Build and Run](#build-and-run)
+- [Web Playground](#web-playground)
 - [Language Reference](#language-reference)
 - [Error Messages](#error-messages)
 - [Project Structure](#project-structure)
@@ -37,6 +42,11 @@
  | Executable | <------------ |    gcc    | <------------- |  Codegen  |
  +------------+    (out.c)    +-----------+     out.c      | codegen.c |
                                                            +-----------+
+           checked AST, alternatively (--run):
+                                                           +-----------+
+                                       program output <--- |Interpreter|
+                                                           | interp.c  |
+                                                           +-----------+
 ```
 
 | Stage       | Input                | Output                              | What it does                                                                                       | On error                                      |
@@ -46,6 +56,7 @@
 | **Checker** | AST                  | error count, `eval_type` on every expression | Builds scoped symbol tables, resolves names, type-checks expressions, calls, returns and conditions, emits warnings | prints **all** errors and warnings, returns N |
 | **Codegen** | checked AST          | C source text                       | Emits globals, prototypes and definitions; parenthesizes nested expressions; lowers `print` to `printf` | never fails (input is already checked)        |
 | **gcc**     | generated C          | executable                          | Final compilation (external, not part of `minic`)                                                  | -                                             |
+| **Interpreter** (`--run`) | checked AST | program output, exit code     | Executes the AST directly with the same semantics as the generated C (32-bit wrap-around, `char` truncation, short-circuit `&&`/`\|\|`) | prints `Runtime Error ...` (division by zero, recursion too deep, step limit), exits 1 |
 
 ## Worked Example
 
@@ -218,16 +229,18 @@ Hello, World!
 ### Command-line options
 
 ```
-Usage: minic <input.c> [-o <output.c>] [--tokens] [--ast]
+Usage: minic <input.c> [-o <output.c>] [--tokens] [--ast] [--run [--max-steps N]]
        minic -h | --help
 ```
 
 | Option          | Description                                                                                         |
 |-----------------|-----------------------------------------------------------------------------------------------------|
-| `<input.c>`     | Mini-C source file (required)                                                                       |
+| `<input.c>`     | Mini-C source file (required); `-` reads the program from standard input                            |
 | `-o <output.c>` | Write the generated C to this file. Without `-o` the C code goes to stdout                          |
 | `--tokens`      | Lex only: print the token stream to stdout and exit 0                                               |
 | `--ast`         | Lex and parse only: print the AST to stdout and exit 0 (the checker is not run)                     |
+| `--run`         | Type-check, then execute the program with the built-in interpreter; exits with `main`'s return value |
+| `--max-steps N` | With `--run`: stop with a runtime error after N execution steps (default 0 = no limit)              |
 | `-h`, `--help`  | Print usage and exit 0                                                                              |
 
 Options may appear in any order. An unknown option, a missing input file or a missing `-o` argument prints the usage to stderr and exits 1. An unreadable input prints `minic: error: cannot open file '<path>'` and exits 1. If the checker reports errors, `minic` prints `minic: compilation failed with N error(s)`, does **not** create the output file, and exits 1.
@@ -240,9 +253,40 @@ Options may appear in any order. An unknown option, a missing input file or a mi
 | `make test`     | Build, then run `bash tests/test.sh`                                                                     |
 | `make examples` | Compile every `examples/*.c` with `minic` into `build/examples/<name>.c`, compile that with `gcc`, and run it |
 | `make memcheck` | Run valgrind over the examples (if valgrind is installed)                                                |
+| `make wasm`     | Build `build/minic.wasm` with `clang --target=wasm32-wasi` (needs a WASI sysroot, see [Web Playground](#web-playground)) |
+| `make playground` | Build the wasm, check it against the native binary, and assemble `build/playground/index.html`         |
 | `make clean`    | Remove build artifacts                                                                                   |
 
 Build flags default to `CC ?= gcc` and `CFLAGS ?= -std=c11 -Wall -Wextra -Wpedantic -O2 -g`; both can be overridden, for example `make CC=clang`.
+
+### Running programs without gcc
+
+```sh
+./minic examples/factorial.c --run          # interpret directly
+echo 'int main() { print(6 * 7); return 0; }' | ./minic - --run
+```
+
+The interpreter is a tree walker over the checked AST. It is tested to produce exactly the same output and exit code as the gcc-compiled program for every example, including `int` overflow, `char` truncation, negative division and short-circuit evaluation order.
+
+## Web Playground
+
+**Live: <https://mrbaten.github.io/minic/>**
+
+The playground is a single self-contained HTML page (about 140 KB). It embeds:
+
+- `build/minic.wasm`: the **unmodified compiler sources** built with `clang --target=wasm32-wasi` (about 75 KB);
+- `playground/minic-wasi.js`: a tiny WASI host (arguments, stdin/stdout/stderr, exit) so the wasm runs in any browser without Emscripten. The program text is passed on stdin (`minic - ...`);
+- the `examples/` programs.
+
+Each keystroke re-runs `minic --tokens`, `--ast` and code generation in a fresh wasm instance (a few milliseconds). **Run** executes `minic --run` inside a Web Worker with a step limit and a 5-second timeout, so an infinite loop never freezes the page. Errors are shown on the pipeline strip and marked in the editor's gutter, and **Share link** encodes the program in the URL.
+
+To build it yourself you need clang with the wasm32 target and a WASI sysroot (Ubuntu: `apt install clang lld wasi-libc libclang-rt-18-dev-wasm32`; elsewhere use [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) and set `WASM_CC`), plus Node.js:
+
+```sh
+make playground                     # -> build/playground/index.html
+```
+
+`playground/test.mjs` runs every example in every mode through both the wasm build and the native binary and requires byte-identical stdout, stderr and exit codes.
 
 ## Language Reference
 
@@ -434,7 +478,14 @@ minic-compiler/
 |   |-- checker.h         check_program declaration
 |   |-- checker.c         scoped symbol table, type rules, errors and warnings
 |   |-- codegen.h         codegen_program declaration
-|   `-- codegen.c         C emitter: layout, parenthesization, print lowering
+|   |-- codegen.c         C emitter: layout, parenthesization, print lowering
+|   |-- interp.h          interp_run declaration
+|   `-- interp.c          tree-walking interpreter behind --run (and the playground's Run button)
+|-- playground/
+|   |-- template.html     the web playground UI (editor, tabs, pipeline strip)
+|   |-- minic-wasi.js     minimal WASI host that runs minic.wasm in the browser and in Node
+|   |-- build.mjs         bundles wasm + shim + examples into one HTML file
+|   `-- test.mjs          wasm vs native equivalence tests
 |-- examples/
 |   |-- *.c               sample Mini-C programs (hello, variables, arithmetic, if_else, while_loop, function, factorial, ...)
 |   `-- expected/*.txt    exact expected stdout for each example
@@ -452,6 +503,7 @@ Each stage lives in its own module with a deliberately tiny interface. The drive
 | Parser   | `Node *parse_program(const TokenList *tokens)`    | Returns a `NODE_PROGRAM` tree. Reports the first syntax error and exits.                      |
 | Checker  | `int check_program(Node *program)`                | Annotates `eval_type` on expression nodes, prints all errors and warnings, returns the error count (0 means success). |
 | Codegen  | `void codegen_program(const Node *program, FILE *out)` | Writes the C translation. Assumes the checker returned 0.                                |
+| Interpreter | `int interp_run(const Node *program, FILE *out, long max_steps, int *exit_code)` | Executes the checked AST; a runtime error is printed and exits 1, like lexer and parser errors. |
 
 Supporting API: `token_list_free`, `token_print`, `token_list_print` (lexer); `ast_new_node`, `node_list_push`, `ast_free`, `print_ast` (ast).
 
@@ -472,11 +524,12 @@ Supporting API: `token_list_free`, `token_print`, `token_list_print` (lexer); `a
 make test       # build, then run tests/test.sh
 make memcheck   # valgrind over the examples (if installed)
 make examples   # compile, link and run every example
+make playground # wasm build + wasm-vs-native equivalence tests (needs WASI clang + Node)
 ```
 
 `tests/test.sh` is a Bash script that can be run from any directory. It uses the built `./minic` (and fails clearly if it is missing), writes scratch files to a `mktemp -d` directory that is removed on exit, and compiles generated C with `gcc -std=c11 -Wall -Wextra -Werror`. It prints `PASS` or `FAIL` for each test, a summary line `N passed, M failed`, and exits 1 if anything failed. A crash (exit code 128 or higher) always counts as a failure.
 
-The suite currently runs **60 tests**, all passing. Test categories:
+The suite currently runs **83 tests**, all passing (plus **54** wasm-vs-native checks in `playground/test.mjs`). Test categories:
 
 - **Lexer**: token stream for `int x = 5;`, comments ignored, lexical errors (unknown character, unterminated comment).
 - **Parser and AST**: precedence shape of `5 + 3 * 2` in `--ast` output, syntax errors such as `int x = ;`, invalid assignment target.
@@ -487,6 +540,7 @@ The suite currently runs **60 tests**, all passing. Test categories:
 - **Warnings**: uninitialized variable use and missing returns exit 0 with a warning; a function with a missing return still produces `-Werror`-clean C.
 - **CLI**: `--help` exits 0, a missing file exits 1.
 - **Examples**: every `examples/*.c` goes through `minic`, `gcc` and execution, and its stdout is compared with `examples/expected/<name>.txt`.
+- **Interpreter (`--run`)**: every example must print exactly its expected output; exit codes, `int`/`char` wrap-around, C division rounding, short-circuit order, shadowing, 4000-deep recursion, escapes; runtime errors (division by zero, step limit, runaway recursion); reading the program from stdin.
 - **Memory**: a valgrind leak check on one example (`--error-exitcode=1 --leak-check=full`), when valgrind is available.
 
 ## What I Learned
@@ -515,7 +569,8 @@ Mini-C is intentionally small. Be aware of the following:
 - **No preprocessor:** no `#include`, `#define` or conditional compilation.
 - **Decimal integer literals only:** no hex, octal or binary literals.
 - **No string variables.** Strings exist only as the argument of `print`.
-- **No x86-64 assembly backend yet.** `minic` transpiles to C only and relies on `gcc` or `clang` for the final executable.
+- **No x86-64 assembly backend yet.** `minic` transpiles to C (or interprets with `--run`); native executables come from `gcc` or `clang`.
+- **Recursion depth is limited** to 5000 nested calls in the interpreter; in the browser the JavaScript engine's stack usually ends it earlier (around 2000), which is reported as a clean runtime error.
 - **Uninitialized-variable analysis is flow-insensitive.** It follows source order and warns once per variable, so it can miss real problems and can occasionally warn when a variable is assigned on every actual path.
 - **Single-file programs only.** There is no linking of multiple Mini-C sources.
 - **Integer overflow follows C semantics**, because the generated code is compiled as ordinary C.

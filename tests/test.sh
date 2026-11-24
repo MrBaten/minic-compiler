@@ -363,6 +363,77 @@ else
     fail "missing input file exits 1" "exit $RC"
 fi
 
+# ---------------------------------------------------------------------------
+# Interpreter (--run): must behave exactly like the gcc-compiled program.
+# ---------------------------------------------------------------------------
+
+# expect_run NAME SOURCE EXPECTED_STDOUT [EXPECTED_EXIT]
+# Runs SOURCE with `minic --run` and compares stdout and the exit code.
+expect_run() {
+    local name="$1" source="$2" expected="$3" want_rc="${4:-0}"
+    local src
+    src=$(write_src "$name" "$source")
+    run_minic "$src" --run
+    if [ "$RC" -ge 128 ]; then
+        fail "$name" "minic crashed (exit $RC)"
+    elif [ "$RC" -ne "$want_rc" ]; then
+        fail "$name" "expected exit $want_rc, got $RC: $(cat "$ERR_FILE")"
+    elif [ "$(cat "$OUT_FILE")" != "$expected" ]; then
+        fail "$name" "stdout differs: got '$(cat "$OUT_FILE")'"
+    else
+        pass "$name"
+    fi
+}
+
+# expect_runtime_error NAME SOURCE STDERR_SUBSTRING
+expect_runtime_error() {
+    local name="$1" source="$2" needle="$3"
+    local src
+    src=$(write_src "$name" "$source")
+    run_minic "$src" --run --max-steps 2000000
+    if [ "$RC" -ge 128 ]; then
+        fail "$name" "minic crashed (exit $RC)"
+    elif [ "$RC" -ne 1 ]; then
+        fail "$name" "expected exit 1, got $RC"
+    elif ! grep -qF -- "$needle" "$ERR_FILE"; then
+        fail "$name" "stderr lacks '$needle': $(cat "$ERR_FILE")"
+    else
+        pass "$name"
+    fi
+}
+
+# Every example: interpreter output must equal the expected (gcc) output.
+for ex in examples/*.c; do
+    [ -f "$ex" ] || continue
+    base=$(basename "$ex" .c)
+    [ -f "examples/expected/$base.txt" ] || continue
+    if ./minic "$ex" --run > "$TMP/run.out" 2> "$TMP/run.err" \
+        && diff "examples/expected/$base.txt" "$TMP/run.out" > /dev/null; then
+        pass "run example $base"
+    else
+        fail "run example $base" "$(cat "$TMP/run.err")"
+    fi
+done
+
+expect_run "run: exit code from main" 'int main() { print(1); return 42; }' "1" 42
+expect_run "run: char wraps like C" 'int main() { char c = 300; print(c + 0); return 0; }' "44"
+expect_run "run: int wraps like C" 'int main() { int m = 2147483647; print(m + 1); return 0; }' "-2147483648"
+expect_run "run: C division rounding" 'int main() { print(-7 / 2); print(-7 % 2); return 0; }' $'-3\n-1'
+expect_run "run: short-circuit order" 'int t(int x) { print(x); return x; } int main() { print(t(0) && t(1)); print(t(1) || t(2)); return 0; }' $'0\n0\n1\n1'
+expect_run "run: shadowing scopes" 'int g = 1; int main() { print(g); { int g = 2; print(g); } print(g); return 0; }' $'1\n2\n1'
+expect_run "run: deep recursion" 'int d(int n) { if (n == 0) return 0; return 1 + d(n - 1); } int main() { print(d(4000)); return 0; }' "4000"
+expect_run "run: string escapes" 'int main() { print("a\tb \"q\" 100%"); return 0; }' $'a\tb "q" 100%'
+expect_runtime_error "run: division by zero" 'int main() { int z = 0; print(1 / z); return 0; }' "division by zero"
+expect_runtime_error "run: step limit stops infinite loop" 'int main() { while (1) { } return 0; }' "step limit"
+expect_runtime_error "run: runaway recursion" 'int f(int n) { return f(n + 1); } int main() { print(f(0)); return 0; }' "call stack overflow"
+
+# Reading the program from standard input with "-".
+if [ "$(printf 'int main() { print(7); return 0; }' | ./minic - --run 2>&1)" = "7" ]; then
+    pass "stdin input with -"
+else
+    fail "stdin input with -" "unexpected output"
+fi
+
 # Valgrind leak check on one example (if available).
 if command -v valgrind > /dev/null 2>&1; then
     if [ -f examples/factorial.c ]; then

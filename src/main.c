@@ -8,6 +8,7 @@
 #include "parser.h"
 #include "checker.h"
 #include "codegen.h"
+#include "interp.h"
 
 /* Command-line options collected by parse_args. */
 typedef struct {
@@ -16,13 +17,22 @@ typedef struct {
     int show_tokens;
     int show_ast;
     int show_help;
+    int run;
+    long max_steps;
 } Options;
 
 /* Print the usage text to the given stream. */
 static void print_usage(FILE *out)
 {
-    fprintf(out, "Usage: minic <input.c> [-o <output.c>] [--tokens] [--ast]\n");
+    fprintf(out, "Usage: minic <input.c> [-o <output.c>] [--tokens] [--ast] [--run [--max-steps N]]\n");
     fprintf(out, "       minic -h | --help\n");
+    fprintf(out, "\n");
+    fprintf(out, "  <input.c>      Mini-C source file, or - to read standard input\n");
+    fprintf(out, "  -o <file>      write the generated C to <file> (default: stdout)\n");
+    fprintf(out, "  --tokens       print the token stream and stop\n");
+    fprintf(out, "  --ast          print the abstract syntax tree and stop\n");
+    fprintf(out, "  --run          type-check, then execute the program directly\n");
+    fprintf(out, "  --max-steps N  with --run: stop after N execution steps (0 = no limit)\n");
 }
 
 /* Parse argv into opts; return 1 on success, 0 on a usage error. */
@@ -39,6 +49,19 @@ static int parse_args(int argc, char **argv, Options *opts)
             opts->show_tokens = 1;
         } else if (strcmp(arg, "--ast") == 0) {
             opts->show_ast = 1;
+        } else if (strcmp(arg, "--run") == 0) {
+            opts->run = 1;
+        } else if (strcmp(arg, "--max-steps") == 0) {
+            char *end;
+            if (i + 1 >= argc) {
+                fprintf(stderr, "minic: error: option '--max-steps' requires an argument\n");
+                return 0;
+            }
+            opts->max_steps = strtol(argv[++i], &end, 10);
+            if (*end != '\0' || opts->max_steps < 0) {
+                fprintf(stderr, "minic: error: invalid value for '--max-steps'\n");
+                return 0;
+            }
         } else if (strcmp(arg, "-o") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "minic: error: option '-o' requires an argument\n");
@@ -62,10 +85,12 @@ static int parse_args(int argc, char **argv, Options *opts)
     return 1;
 }
 
-/* Read a whole file into a NUL-terminated heap buffer; NULL if unreadable. */
+/* Read a whole file (or stdin when path is "-") into a NUL-terminated heap
+ * buffer; NULL if unreadable. */
 static char *read_file(const char *path)
 {
-    FILE *fp = fopen(path, "rb");
+    int use_stdin = strcmp(path, "-") == 0;
+    FILE *fp = use_stdin ? stdin : fopen(path, "rb");
     char *buf;
     size_t cap = 4096;
     size_t len = 0;
@@ -93,11 +118,15 @@ static char *read_file(const char *path)
         }
     }
     if (ferror(fp)) {
-        fclose(fp);
+        if (!use_stdin) {
+            fclose(fp);
+        }
         free(buf);
         return NULL;
     }
-    fclose(fp);
+    if (!use_stdin) {
+        fclose(fp);
+    }
     buf[len] = '\0';
     return buf;
 }
@@ -133,7 +162,8 @@ static int emit_output(const Node *program, const char *path)
     return 0;
 }
 
-/* Program entry: run the lexer, parser, checker and code generator as requested. */
+/* Program entry: run the lexer, parser, checker and then either the code
+ * generator or the interpreter, as requested. */
 int main(int argc, char **argv)
 {
     Options opts;
@@ -178,6 +208,13 @@ int main(int argc, char **argv)
     if (errors > 0) {
         fprintf(stderr, "minic: compilation failed with %d error(s)\n", errors);
         status = 1;
+    } else if (opts.run) {
+        int exit_code = 0;
+        if (interp_run(program, stdout, opts.max_steps, &exit_code) != 0) {
+            status = 1;
+        } else {
+            status = exit_code & 0xff;
+        }
     } else {
         status = emit_output(program, opts.output);
     }

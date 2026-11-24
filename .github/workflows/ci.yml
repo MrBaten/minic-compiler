@@ -39,3 +39,28 @@ jobs:
       - name: Memory check (Linux)
         if: runner.os == 'Linux'
         run: make memcheck CC="$CC"
+
+  wasm-playground:
+    name: WebAssembly build + playground
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install clang and the WASI sysroot
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 wasi-libc libclang-rt-18-dev-wasm32
+
+      - name: Build native + wasm, check equivalence, bundle the playground
+        run: make playground WASM_CC=clang-18
+
+      - name: Upload playground
+        uses: actions/upload-artifact@v4
+        with:
+          name: minic-playground
+          path: build/playground/index.html
+

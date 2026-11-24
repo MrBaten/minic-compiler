@@ -9,7 +9,13 @@ OBJS := $(patsubst src/%.c,build/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
 EXAMPLES := $(wildcard examples/*.c)
 
-.PHONY: all test examples memcheck clean
+# WebAssembly build (needs clang with the wasm32 target and a WASI sysroot,
+# e.g. Ubuntu packages wasi-libc + libclang-rt-18-dev-wasm32, or wasi-sdk).
+WASM_CC ?= clang
+WASM_FLAGS ?= --target=wasm32-wasi -std=c11 -O2 -Wall -Wextra -Wpedantic -Werror \
+              -Wl,-z,stack-size=8388608 -Wl,--strip-all
+
+.PHONY: all test examples memcheck clean wasm playground
 
 all: minic
 
@@ -47,3 +53,15 @@ clean:
 	rm -rf build minic out.c out
 
 -include $(DEPS)
+
+wasm: build/minic.wasm
+
+build/minic.wasm: $(SRCS) $(wildcard src/*.h)
+	@mkdir -p build
+	$(WASM_CC) $(WASM_FLAGS) $(SRCS) -o $@
+
+# Web playground: one self-contained HTML file in build/playground/.
+playground: all build/minic.wasm
+	node playground/test.mjs
+	node playground/build.mjs
+

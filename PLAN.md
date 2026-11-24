@@ -645,3 +645,23 @@ and (if `valgrind` exists) a leak check on one example (`--error-exitcode=1 --le
 1. `make` with zero warnings (gcc and clang).
 2. `make test` all green; `make examples`; valgrind clean.
 3. Replace README sample outputs with real compiler output.
+
+---
+
+## 14. Extension: interpreter and web playground (added after v1)
+
+* **`src/interp.h` / `src/interp.c`** — `int interp_run(const Node *program, FILE *out, long max_steps, int *exit_code)`.
+  Tree-walking interpreter over the checked AST with the same semantics as the generated C
+  (32-bit wrap-around arithmetic, `char` truncation on store, short-circuit `&&`/`||`,
+  missing return in a non-void function yields 0). Runtime errors
+  (`Runtime Error at line L, column C: <message>`: division by zero, `INT_MIN / -1`,
+  recursion deeper than 5000 calls, step limit exceeded) are fatal: printed to stderr, exit 1.
+  No `setjmp`, so the module also builds for wasm32-wasi.
+* **Driver**: `--run` (execute instead of generating C; exit status = `main`'s return value & 0xff),
+  `--max-steps N` (0 = unlimited), and input path `-` = read the program from stdin.
+* **`playground/`**: `minic-wasi.js` (minimal WASI host: args, stdin/stdout/stderr, proc_exit;
+  no filesystem), `template.html` (UI), `build.mjs` (bundles `build/minic.wasm`, the shim and
+  `examples/*.c` into one self-contained HTML file), `test.mjs` (wasm output must be
+  byte-identical to the native binary for every example in every mode).
+* **Make**: `make wasm`, `make playground`. Deployed copy: <https://mrbaten.github.io/minic/>.
+

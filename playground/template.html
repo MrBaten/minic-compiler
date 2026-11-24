@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniC Playground - a C compiler written in C, running in your browser</title>
+<meta name="description" content="Try MiniC, a hand-written compiler for a subset of C, in your browser: see tokens, the abstract syntax tree and the generated C, and run programs. Compiled to WebAssembly.">
+<style>
+:root{
+  --bg:#0a0a0a;--panel:#111213;--panel-2:#17181a;--line:#26292b;--line-2:#33363a;
+  --text:#e9ebec;--muted:#9aa0a6;--hi:#03fca9;--hi-ink:#0a0a0a;--err:#ff6b6b;--warn:#ffcc66;
+  --kw:#03fca9;--type:#7cc7ff;--num:#ffb86b;--str:#f5d76e;--com:#6b7177;--fn:#c9a6ff;
+  --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--sans)}
+a{color:inherit}
+button,select{font:inherit;color:inherit}
+.app{display:grid;grid-template-rows:auto auto 1fr auto;grid-template-columns:minmax(0,1fr);height:100vh;height:100dvh}
+
+/* header */
+header{display:flex;align-items:center;gap:1rem;padding:.9rem 1.25rem;border-bottom:1px solid var(--line)}
+.logo{display:flex;align-items:center;gap:.6rem;font-weight:700;letter-spacing:-.01em;font-size:1.05rem;white-space:nowrap}
+.logo .mark{width:28px;height:28px;border-radius:8px;background:var(--hi);color:var(--hi-ink);display:grid;place-items:center;font:700 .8rem var(--mono)}
+.tag{color:var(--muted);font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spacer{flex:1}
+.hlink{display:inline-flex;align-items:center;gap:.4rem;padding:.4rem .8rem;border:1px solid var(--line-2);border-radius:999px;text-decoration:none;font-size:.85rem;white-space:nowrap}
+.hlink:hover{border-color:var(--hi)}
+.hlink svg{width:15px;height:15px;fill:currentColor}
+
+/* toolbar */
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;padding:.7rem 1.25rem;border-bottom:1px solid var(--line);background:var(--panel)}
+.btn{display:inline-flex;align-items:center;gap:.45rem;padding:.5rem .95rem;border-radius:10px;border:1px solid var(--line-2);background:var(--panel-2);cursor:pointer;font-size:.9rem}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--hi);color:var(--hi-ink);border-color:var(--hi);font-weight:650}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn:disabled{opacity:.55;cursor:default}
+.btn kbd{font:600 .72rem var(--mono);opacity:.7}
+select{padding:.5rem .7rem;border-radius:10px;border:1px solid var(--line-2);background:var(--panel-2);cursor:pointer;font-size:.9rem}
+.pipeline{display:flex;align-items:center;gap:.3rem;margin-left:auto;min-width:0;font:500 .78rem var(--mono);color:var(--muted)}
+.stage{padding:.25rem .55rem;border-radius:999px;border:1px solid var(--line-2);transition:all .2s}
+.stage.ok{border-color:#1f5f4a;color:var(--hi)}
+.stage.bad{border-color:#6b2a2a;color:var(--err);background:#2a1414}
+.stage.skip{opacity:.45}
+.arrow{opacity:.5}
+
+/* main split */
+main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);min-height:0}
+.pane{display:flex;flex-direction:column;min-height:0;min-width:0}
+.pane + .pane{border-left:1px solid var(--line)}
+.pane-head{display:flex;align-items:center;gap:.25rem;padding:0 .75rem;height:42px;border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+.pane-title{font:600 .8rem var(--mono);color:var(--muted);padding:0 .4rem}
+.tab{white-space:nowrap;padding:.4rem .75rem;border:0;background:none;border-radius:8px;cursor:pointer;color:var(--muted);font-size:.86rem}
+.tab:hover{color:var(--text)}
+.tab[aria-selected="true"]{background:var(--panel-2);color:var(--text);box-shadow:inset 0 -2px 0 var(--hi)}
+.tab .count{font:600 .7rem var(--mono);margin-left:.3rem;color:var(--err)}
+
+/* editor */
+.editor{position:relative;flex:1;min-height:0;display:flex;overflow:hidden;background:var(--bg)}
+.gutter{flex:none;padding:14px 10px 14px 0;width:48px;text-align:right;font:13.5px/1.6 var(--mono);color:#4b5056;user-select:none;overflow:hidden;background:var(--bg);border-right:1px solid var(--line)}
+.gutter div.err{color:var(--err);font-weight:700}
+.code-wrap{position:relative;flex:1;min-width:0}
+.code-wrap pre,.code-wrap textarea{position:absolute;inset:0;margin:0;padding:14px 16px;border:0;font:13.5px/1.6 var(--mono);tab-size:4;white-space:pre;overflow:auto;letter-spacing:0}
+.code-wrap pre{pointer-events:none;color:var(--text)}
+.code-wrap textarea{background:transparent;color:transparent;caret-color:var(--hi);resize:none;outline:none;-webkit-text-fill-color:transparent}
+.code-wrap textarea::selection{background:rgba(3,252,169,.25);-webkit-text-fill-color:transparent}
+.k{color:var(--kw)}.t{color:var(--type)}.n{color:var(--num)}.s{color:var(--str)}.c{color:var(--com);font-style:italic}.f{color:var(--fn)}
+
+/* output */
+.out{flex:1;min-height:0;overflow:auto;margin:0;padding:14px 16px;font:13.5px/1.6 var(--mono);white-space:pre;background:var(--bg)}
+.out .e,.out .w{white-space:pre-wrap;overflow-wrap:anywhere}.out .e{color:var(--err)}.out .w{color:var(--warn)}.out .m{color:var(--muted)}.out .okline{color:var(--hi)}
+.out .node{color:var(--type)}.out .lbl{color:var(--muted)}
+.tokgrid{display:flex;flex-wrap:wrap;gap:6px;white-space:normal}
+.tok{padding:.2rem .5rem;border-radius:7px;border:1px solid var(--line-2);font:12.5px var(--mono);background:var(--panel)}
+.tok.kw{border-color:#1f5f4a;color:var(--kw)}.tok.id{color:var(--text)}.tok.lit{color:var(--num);border-color:#5a4325}.tok.op{color:var(--muted)}.tok.eof{opacity:.5}
+.empty{color:var(--muted);font-family:var(--sans);white-space:normal;line-height:1.5}
+
+/* status bar */
+footer{display:flex;align-items:center;gap:1rem;padding:.45rem 1.25rem;border-top:1px solid var(--line);font:12px var(--mono);color:var(--muted);background:var(--panel)}
+footer .dot{width:8px;height:8px;border-radius:50%;background:var(--hi);box-shadow:0 0 10px var(--hi);display:inline-block;margin-right:.4rem}
+footer .dot.bad{background:var(--err);box-shadow:0 0 10px var(--err)}
+footer .grow{flex:1}
+
+@media (max-width:860px){
+  .app{height:auto;min-height:100vh}
+  main{grid-template-columns:minmax(0,1fr)}
+  .pane + .pane{border-left:0;border-top:1px solid var(--line)}
+  .pane-head{overflow-x:auto}
+  .editor{flex:none;height:55vh;min-height:280px}
+  .out{min-height:300px}
+  header{padding:.8rem 1rem}.toolbar{padding:.6rem 1rem}
+  .tag{display:none}
+  .pipeline{margin-left:0;width:100%;overflow-x:auto}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo"><span class="mark">mc</span>MiniC Playground</div>
+    <div class="tag">A C compiler written in C from scratch, running in your browser via WebAssembly</div>
+    <div class="spacer"></div>
+    <a class="hlink" href="https://github.com/MrBaten/minic-compiler" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.08 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.3 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg>Source</a>
+  </header>
+
+  <div class="toolbar">
+    <button class="btn primary" id="run" title="Run (Ctrl/Cmd + Enter)">&#9654; Run <kbd id="runkey">Ctrl+Enter</kbd></button>
+    <select id="examples" aria-label="Load an example"></select>
+    <button class="btn" id="share" title="Copy a link to this program">Share link</button>
+    <div class="pipeline" aria-label="Compiler pipeline status">
+      <span class="stage" id="st-lexer">Lexer</span><span class="arrow">&rarr;</span>
+      <span class="stage" id="st-parser">Parser</span><span class="arrow">&rarr;</span>
+      <span class="stage" id="st-checker">Checker</span><span class="arrow">&rarr;</span>
+      <span class="stage" id="st-codegen">Codegen</span><span class="arrow">&rarr;</span>
+      <span class="stage" id="st-run">Run</span>
+    </div>
+  </div>
+
+  <main>
+    <section class="pane" aria-label="Mini-C source">
+      <div class="pane-head"><span class="pane-title">main.c</span></div>
+      <div class="editor">
+        <div class="gutter" id="gutter" aria-hidden="true"></div>
+        <div class="code-wrap">
+          <pre id="hl" aria-hidden="true"></pre>
+          <textarea id="src" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-label="Mini-C source code"></textarea>
+        </div>
+      </div>
+    </section>
+    <section class="pane" aria-label="Compiler output">
+      <div class="pane-head" role="tablist">
+        <button class="tab" role="tab" data-tab="output" aria-selected="true">Output<span class="count" id="errcount"></span></button>
+        <button class="tab" role="tab" data-tab="tokens" aria-selected="false">Tokens</button>
+        <button class="tab" role="tab" data-tab="ast" aria-selected="false">AST</button>
+        <button class="tab" role="tab" data-tab="c" aria-selected="false">Generated C</button>
+      </div>
+      <div class="out" id="out" role="tabpanel" tabindex="0"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="status"><span class="dot"></span>Loading compiler&hellip;</span>
+    <span class="grow"></span>
+    <span id="meta">minic __MINIC_VERSION__ &middot; WebAssembly</span>
+  </footer>
+</div>
+
+<script>
+/*__MINIC_WASI__*/
+</script>
+<script>
+(function () {
+  "use strict";
+
+  var WASM_BASE64 = "__MINIC_WASM_BASE64__";
+  var EXAMPLES = /*__EXAMPLES__*/;
+  var RUN_TIMEOUT_MS = 5000;
+  var MAX_STEPS = "50000000";
+
+  var src = document.getElementById("src");
+  var hl = document.getElementById("hl");
+  var gutter = document.getElementById("gutter");
+  var out = document.getElementById("out");
+  var statusEl = document.getElementById("status");
+  var runBtn = document.getElementById("run");
+  var exampleSel = document.getElementById("examples");
+
+  var wasmModule = null;
+  var currentTab = "output";
+  var views = { tokens: null, ast: null, c: null, check: null };
+  var runResult = null;
+  var errorLines = {};
+  var runWorker = null;
+  var runTimer = null;
+
+  /* ---------- utilities ---------- */
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function b64ToBytes(b64) {
+    var bin = atob(b64), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
+    return bytes;
+  }
+  function utf8ToB64url(s) {
+    var bytes = new TextEncoder().encode(s), bin = "";
+    bytes.forEach(function (b) { bin += String.fromCharCode(b); });
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function b64urlToUtf8(s) {
+    s = s.replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) { s += "="; }
+    return new TextDecoder().decode(b64ToBytes(s));
+  }
+  function setStatus(text, bad) {
+    statusEl.innerHTML = '<span class="dot' + (bad ? " bad" : "") + '"></span>' + esc(text);
+  }
+
+  /* ---------- syntax highlighting (display only) ---------- */
+  var C_RE = /(\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$))|("(?:[^"\\\n]|\\.)*"?)|('(?:[^'\\\n]|\\.)*'?)|\b(int|char|void|double|long|unsigned|const|static)\b|\b(if|else|while|for|return)\b|\b(print|printf)\b(?=\s*\()|\b(\d+)\b|(#include\s*<[^>]*>)/g;
+  function highlightC(code) {
+    var html = "", last = 0, m;
+    C_RE.lastIndex = 0;
+    while ((m = C_RE.exec(code)) !== null) {
+      if (m[0] === "") { C_RE.lastIndex++; continue; }
+      html += esc(code.slice(last, m.index));
+      var cls = m[1] ? "c" : m[2] || m[3] ? "s" : m[4] ? "t" : m[5] ? "k" : m[6] ? "f" : m[7] ? "n" : "t";
+      html += '<span class="' + cls + '">' + esc(m[0]) + "</span>";
+      last = m.index + m[0].length;
+    }
+    return html + esc(code.slice(last));
+  }
+
+  function renderEditor() {
+    var code = src.value;
+    hl.innerHTML = highlightC(code) + "\n";
+    var lines = code.split("\n").length, g = "";
+    for (var i = 1; i <= lines; i++) {
+      g += '<div' + (errorLines[i] ? ' class="err"' : "") + ">" + i + "</div>";
+    }
+    gutter.innerHTML = g;
+    syncScroll();
+  }
+  function syncScroll() {
+    hl.scrollTop = src.scrollTop;
+    hl.scrollLeft = src.scrollLeft;
+    gutter.scrollTop = src.scrollTop;
+  }
+
+  /* ---------- compiler calls ---------- */
+  function minic(args) {
+    return runMinic(wasmModule, ["-"].concat(args), src.value);
+  }
+
+  function stageFor(stderr) {
+    if (/Lexer Error/.test(stderr)) { return "lexer"; }
+    if (/Parser Error/.test(stderr)) { return "parser"; }
+    if (/Semantic Error/.test(stderr)) { return "checker"; }
+    return null;
+  }
+
+  function setPipeline(failedAt, ranOk, runFailed) {
+    var order = ["lexer", "parser", "checker", "codegen", "run"];
+    var failedIdx = failedAt ? order.indexOf(failedAt) : -1;
+    order.forEach(function (name, i) {
+      var el = document.getElementById("st-" + name);
+      el.className = "stage";
+      if (failedIdx >= 0) {
+        el.classList.add(i < failedIdx ? "ok" : i === failedIdx ? "bad" : "skip");
+      } else if (name === "run") {
+        if (runFailed) { el.classList.add("bad"); }
+        else if (ranOk) { el.classList.add("ok"); }
+      } else {
+        el.classList.add("ok");
+      }
+    });
+  }
+
+  function collectErrorLines(stderr) {
+    errorLines = {};
+    stderr.replace(/(?:Error|Warning) at line (\d+)/g, function (_, n) { errorLines[+n] = true; return _; });
+  }
+
+  /* Re-run the analysis views (fast: a fresh wasm instance per call). */
+  function analyse() {
+    if (!wasmModule) { return; }
+    var t0 = performance.now();
+    views.tokens = minic(["--tokens"]);
+    views.ast = minic(["--ast"]);
+    views.c = minic([]);            /* full pipeline: check + generate C */
+    views.check = views.c;
+    var ms = performance.now() - t0;
+    var stderr = views.c.stderr;
+    var failedAt = stageFor(views.tokens.stderr) || stageFor(views.ast.stderr) || stageFor(stderr);
+    collectErrorLines(views.tokens.stderr + views.ast.stderr + stderr);
+    runResult = null;
+    setPipeline(failedAt, false, false);
+    var nErr = (stderr.match(/Error/g) || []).length;
+    document.getElementById("errcount").textContent = nErr ? String(nErr) : "";
+    if (failedAt) {
+      setStatus(failedAt.charAt(0).toUpperCase() + failedAt.slice(1) + " error - see Output", true);
+    } else {
+      setStatus("Compiled in " + ms.toFixed(1) + " ms" + (/Warning/.test(stderr) ? " with warnings" : "") + " - press Run", false);
+    }
+    renderEditor();
+    renderTab();
+  }
+
+  /* ---------- running (in a worker, with a timeout) ---------- */
+  var workerSrc = null;
+  function makeWorker() {
+    if (!workerSrc) {
+      var shim = document.querySelector("script").textContent;
+      workerSrc = URL.createObjectURL(new Blob([shim +
+        "\nself.onmessage=function(e){var d=e.data;var t0=performance.now();" +
+        "var r=runMinic(d.module,d.args,d.source);r.ms=performance.now()-t0;self.postMessage(r);};"],
+        { type: "text/javascript" }));
+    }
+    return new Worker(workerSrc);
+  }
+
+  function stopRun() {
+    if (runTimer) { clearTimeout(runTimer); runTimer = null; }
+    if (runWorker) { runWorker.terminate(); runWorker = null; }
+    runBtn.disabled = false;
+  }
+
+  function run() {
+    if (!wasmModule) { return; }
+    analyse();
+    if (stageFor(views.c.stderr)) {
+      selectTab("output");
+      return;
+    }
+    stopRun();
+    runBtn.disabled = true;
+    setStatus("Running...", false);
+    runWorker = makeWorker();
+    runWorker.onmessage = function (e) {
+      var r = e.data;
+      stopRun();
+      runResult = r;
+      var failed = r.exitCode !== 0 && /Runtime Error/.test(r.stderr);
+      setPipeline(null, !failed, failed);
+      collectErrorLines(views.c.stderr + r.stderr);
+      renderEditor();
+      setStatus((failed ? "Runtime error" : "Finished in " + r.ms.toFixed(1) + " ms") +
+        " - exit code " + r.exitCode + (r.truncated ? " - output truncated at 1 MiB" : ""), failed);
+      selectTab("output");
+    };
+    runWorker.onerror = function (err) {
+      stopRun();
+      runResult = { stdout: "", stderr: "Internal error: " + err.message + "\n", exitCode: 1 };
+      setPipeline(null, false, true);
+      setStatus("Internal error", true);
+      selectTab("output");
+    };
+    runWorker.postMessage({ module: wasmModule, args: ["-", "--run", "--max-steps", MAX_STEPS], source: src.value });
+    runTimer = setTimeout(function () {
+      stopRun();
+      runResult = { stdout: "", stderr: "Stopped: the program ran longer than " + (RUN_TIMEOUT_MS / 1000) + " seconds.\n", exitCode: 1 };
+      setPipeline(null, false, true);
+      setStatus("Timed out after " + (RUN_TIMEOUT_MS / 1000) + " s", true);
+      selectTab("output");
+    }, RUN_TIMEOUT_MS);
+  }
+
+  /* ---------- output rendering ---------- */
+  function diagHtml(stderr) {
+    return stderr.split("\n").filter(Boolean).map(function (line) {
+      var cls = /Warning/.test(line) ? "w" : "e";
+      return '<span class="' + cls + '">' + esc(line) + "</span>";
+    }).join("\n");
+  }
+
+  function renderOutput() {
+    var html = "";
+    var diag = views.check ? views.check.stderr : "";
+    if (diag) { html += diagHtml(diag) + "\n\n"; }
+    if (runResult) {
+      if (runResult.stdout) { html += esc(runResult.stdout); }
+      if (runResult.stderr) { html += (runResult.stdout ? "\n" : "") + diagHtml(runResult.stderr) + "\n"; }
+      html += '\n<span class="m">-- program exited with code ' + runResult.exitCode + " --</span>";
+    } else if (!stageFor(diag)) {
+      html += '<span class="empty">Press <b>Run</b> (or Ctrl/Cmd + Enter) to execute the program. ' +
+        "The Tokens, AST and Generated C tabs update live as you type.</span>";
+    }
+    out.innerHTML = html;
+  }
+
+  function renderTokens() {
+    var r = views.tokens;
+    if (r.exitCode !== 0) { out.innerHTML = diagHtml(r.stderr); return; }
+    var kw = /^(INT|CHAR|VOID|IF|ELSE|WHILE|FOR|RETURN)$/;
+    var html = '<div class="tokgrid">' + r.stdout.split("\n").filter(Boolean).map(function (t) {
+      var cls = kw.test(t) ? "kw" : /^ID\(/.test(t) ? "id" : /^(NUMBER|STRING|CHAR_LITERAL)\(/.test(t) ? "lit" : t === "EOF" ? "eof" : "op";
+      return '<span class="tok ' + cls + '">' + esc(t) + "</span>";
+    }).join("") + "</div>";
+    out.innerHTML = html;
+  }
+
+  function renderAst() {
+    var r = views.ast;
+    if (r.exitCode !== 0) { out.innerHTML = diagHtml(r.stderr); return; }
+    out.innerHTML = r.stdout.split("\n").map(function (line) {
+      var m = /^(\s*)([A-Za-z]+)(:?)(.*)$/.exec(line);
+      if (!m) { return esc(line); }
+      var isLabel = m[3] === ":" && m[4] === "";
+      return m[1] + '<span class="' + (isLabel ? "lbl" : "node") + '">' + esc(m[2] + m[3]) + "</span>" + esc(m[4]);
+    }).join("\n");
+  }
+
+  function renderC() {
+    var r = views.c;
+    if (r.exitCode !== 0) { out.innerHTML = diagHtml(r.stderr); return; }
+    out.innerHTML = (r.stderr ? diagHtml(r.stderr) + "\n\n" : "") + highlightC(r.stdout);
+  }
+
+  function renderTab() {
+    if (!views.tokens) { return; }
+    if (currentTab === "output") { renderOutput(); }
+    else if (currentTab === "tokens") { renderTokens(); }
+    else if (currentTab === "ast") { renderAst(); }
+    else { renderC(); }
+  }
+
+  function selectTab(name) {
+    currentTab = name;
+    document.querySelectorAll(".tab").forEach(function (t) {
+      t.setAttribute("aria-selected", t.getAttribute("data-tab") === name ? "true" : "false");
+    });
+    out.scrollTop = 0;
+    renderTab();
+  }
+
+  /* ---------- editor behaviour ---------- */
+  var debounce = null;
+  src.addEventListener("input", function () {
+    renderEditor();
+    clearTimeout(debounce);
+    debounce = setTimeout(analyse, 250);
+  });
+  src.addEventListener("scroll", syncScroll);
+  src.addEventListener("keydown", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      run();
+    } else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      var s = src.selectionStart, end = src.selectionEnd;
+      src.setRangeText("    ", s, end, "end");
+      src.dispatchEvent(new Event("input"));
+    }
+  });
+
+  document.querySelectorAll(".tab").forEach(function (t) {
+    t.addEventListener("click", function () { selectTab(t.getAttribute("data-tab")); });
+  });
+  runBtn.addEventListener("click", run);
+
+  Object.keys(EXAMPLES).forEach(function (name) {
+    var o = document.createElement("option");
+    o.value = name;
+    o.textContent = "Example: " + name.replace(/_/g, " ");
+    exampleSel.appendChild(o);
+  });
+  exampleSel.addEventListener("change", function () {
+    src.value = EXAMPLES[exampleSel.value];
+    history.replaceState(null, "", location.pathname);
+    runResult = null;
+    analyse();
+    selectTab("output");
+  });
+
+  document.getElementById("share").addEventListener("click", function () {
+    var url = location.origin + location.pathname + "#code=" + utf8ToB64url(src.value);
+    history.replaceState(null, "", url);
+    var btn = this;
+    function done(msg) { btn.textContent = msg; setTimeout(function () { btn.textContent = "Share link"; }, 1600); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () { done("Link copied"); }, function () { done("Link in address bar"); });
+    } else {
+      done("Link in address bar");
+    }
+  });
+
+  if (/Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)) {
+    document.getElementById("runkey").textContent = "⌘↵";
+  }
+
+  /* ---------- start-up ---------- */
+  var initial = null;
+  var hashMatch = /#code=([A-Za-z0-9_-]+)/.exec(location.hash);
+  if (hashMatch) {
+    try { initial = b64urlToUtf8(hashMatch[1]); } catch (e) { initial = null; }
+  }
+  var defaultName = EXAMPLES.factorial ? "factorial" : Object.keys(EXAMPLES)[0];
+  exampleSel.value = defaultName;
+  src.value = initial !== null ? initial : EXAMPLES[defaultName];
+  renderEditor();
+
+  WebAssembly.compile(b64ToBytes(WASM_BASE64)).then(function (mod) {
+    wasmModule = mod;
+    analyse();
+  }, function (err) {
+    setStatus("Could not load the compiler: " + err.message, true);
+  });
+})();
+</script>
+</body>
+</html>
