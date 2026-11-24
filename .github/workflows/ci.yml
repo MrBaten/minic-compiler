@@ -59,7 +59,7 @@ jobs:
         run: make playground WASM_CC=clang-18
 
       - name: Upload playground
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: minic-playground
           path: build/playground/index.html
