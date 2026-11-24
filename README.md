@@ -6,6 +6,8 @@
 
 ### ▶ [Try it in your browser: MiniC Playground](https://mrbaten.github.io/minic/)
 
+[![MiniC Playground: Mini-C source on the left, program output on the right, with the Lexer, Parser, Checker, Codegen and Run stages all green](docs/images/playground-run.webp)](https://mrbaten.github.io/minic/)
+
 The same C sources, compiled to **WebAssembly**, power an in-browser playground: edit Mini-C, watch the tokens, AST and generated C update as you type, and run the program. Nothing is installed and nothing is sent to a server.
 
 ## Table of Contents
@@ -288,6 +290,14 @@ make playground                     # -> build/playground/index.html
 
 `playground/test.mjs` runs every example in every mode through both the wasm build and the native binary and requires byte-identical stdout, stderr and exit codes.
 
+### Screenshots
+
+| Errors are shown on the pipeline strip and in the gutter | The AST tab, live as you type |
+|---|---|
+| [![Semantic errors: the Checker stage is red, lines 7 to 10 are marked, and the Output tab lists a warning and three errors](docs/images/playground-errors.webp)](https://mrbaten.github.io/minic/) | [![AST tab showing the tree for the factorial example](docs/images/playground-ast.webp)](https://mrbaten.github.io/minic/) |
+| **The generated C** | **Running a program** |
+| [![Generated C tab showing the transpiled factorial program](docs/images/playground-c.webp)](https://mrbaten.github.io/minic/) | [![Output tab after Run, with all five pipeline stages green](docs/images/playground-run.webp)](https://mrbaten.github.io/minic/) |
+
 ## Language Reference
 
 Mini-C is a strict subset of C. A program is a sequence of global variable declarations and function definitions, in any order, and must define `int main()`.
@@ -466,6 +476,7 @@ minic-compiler/
 |-- Makefile              build, test, examples, memcheck, clean
 |-- .gitignore            ignores objects, binaries and build/
 |-- LICENSE               MIT license
+|-- docs/images/         playground screenshots used in this README
 |-- .github/workflows/ci.yml  CI: build + tests on Linux (gcc, clang) and macOS (Apple clang)
 |-- src/
 |   |-- main.c            command-line driver: reads the file, runs the pipeline, handles options and exit codes
